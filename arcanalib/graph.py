@@ -1,3 +1,6 @@
+from collections.abc import Iterable
+
+
 def invert(edge_list, new_label=None):
 	"""
 	Inverts the direction of edges in the given edge list.
@@ -11,10 +14,11 @@ def invert(edge_list, new_label=None):
 	"""
 	prefix = "inv_"
 	return [{**edge,
-			'source': edge['target'],
-			'target': edge['source'],
-			'label': new_label if new_label else prefix + edge.get('label', 'edge'),
-		} for edge in edge_list]
+	         'source': edge['target'],
+	         'target': edge['source'],
+	         'label': new_label if new_label else prefix + edge.get('label', 'edge'),
+	         } for edge in edge_list]
+
 
 def compose(edges1, edges2, new_label=None):
 	"""
@@ -30,7 +34,7 @@ def compose(edges1, edges2, new_label=None):
 	"""
 	mapping = {
 		edge['source']: {
-			'target': edge['target'], 
+			'target': edge['target'],
 			'label': edge['label']
 		} for edge in edges2
 	}
@@ -43,6 +47,7 @@ def compose(edges1, edges2, new_label=None):
 				'label': new_label if new_label else f"{edge['label']},{mapping[edge['target']]['label']}"
 			})
 	return composed_edges
+
 
 def lift(edges1, edges2, new_label=None):
 	"""
@@ -58,6 +63,7 @@ def lift(edges1, edges2, new_label=None):
 	"""
 	return compose(compose(edges1, edges2), invert(edges1), new_label)
 
+
 class Graph:
 	"""
 	A class to represent a graph with nodes and edges.
@@ -66,6 +72,7 @@ class Graph:
 		nodes (dict): A dictionary of nodes.
 		edges (dict): A dictionary of edges categorized by labels.
 	"""
+
 	def __init__(self, graph_data):
 		"""
 		Initializes the Graph with nodes and edges from the provided data.
@@ -132,7 +139,7 @@ class Graph:
 		Filters nodes by the specified labels.
 
 		Args:
-			labels (list): A list of labels to filter nodes by.
+			labels (list, set): A list of labels to filter nodes by.
 
 		Returns:
 			dict: A dictionary of filtered nodes.
@@ -142,6 +149,12 @@ class Graph:
 			if any(label in labels for label in node['labels']):
 				filtered_nodes[key] = node
 		return filtered_nodes
+
+	def get_all_node_labels(self):
+		return {label for _, node in self.nodes.items() for label in node['labels']}
+
+	def get_all_edge_labels(self):
+		return set(self.edges.keys())
 
 	def get_edges_with_node_labels(self, edge_label, node_label):
 		"""
@@ -155,8 +168,37 @@ class Graph:
 			list: A list of edges that match the criteria.
 		"""
 		if edge_label in self.edges:
-			return [edge for edge in self.edges[edge_label] if node_label in self.nodes[edge['source']].get('labels', []) and node_label in self.nodes[edge['target']].get('labels', [])]
+			return [edge for edge in self.edges[edge_label] if
+			        node_label in self.nodes[edge['source']].get('labels', []) and node_label in self.nodes[
+				        edge['target']].get('labels', [])]
 		return []
+
+	def get_edge_node_labels(self, edge):
+		"""
+		Gets the labels of the source and target nodes for a given edge.
+
+		Args:
+			edge (dict): The edge to retrieve node labels for.
+
+		Returns:
+			list: A list of tuples containing source and target node labels.
+		"""
+		src_labels = self.nodes.get(edge['source'], {}).get('labels', [])
+		tgt_labels = self.nodes.get(edge['target'], {}).get('labels', [])
+		return [(src_label, tgt_label) for src_label in src_labels for tgt_label in tgt_labels]
+
+	def get_source_and_target_labels(self, edge_label):
+		"""
+		Gets the set of source and target labels for a given list of edges.
+
+		Args:
+			edge_list (list): The list of edges to retrieve labels for.
+
+		Returns:
+			set: A set of source and target labels.
+		"""
+		edge_node_labels = {label for edge in self.edges[edge_label] for label in self.get_edge_node_labels(edge)}
+		return edge_node_labels
 
 	def generate_ontology(self):
 		"""
@@ -165,31 +207,28 @@ class Graph:
 		Returns:
 			dict: A dictionary representing the ontology.
 		"""
-		def get_edge_node_labels(edge):
-			"""
-			Gets the labels of the source and target nodes for a given edge.
+		return {label: self.get_source_and_target_labels(edges) for label, edges in self.edges.items()}
 
-			Args:
-				edge (dict): The edge to retrieve node labels for.
+	def to_dict(self, *args, node_labels=None):
+		included_edge_labels = list(args) if args else list(self.edges.keys())
+		if node_labels == 'all':
+			# include all nodes
+			included_node_labels = self.get_all_node_labels()
+		else:
+			# include nodes that are involved with the included edges
+			included_node_labels = {node_label for edge_label in included_edge_labels for node_label in
+			                        self.get_source_and_target_labels(edge_label)}
+			# additional nodes as specified in the argument
+			if isinstance(node_labels, str):
+				included_node_labels.add(node_labels)
+			elif isinstance(node_labels, Iterable):
+				included_node_labels += node_labels
 
-			Returns:
-				list: A list of tuples containing source and target node labels.
-			"""
-			src_labels = self.nodes.get(edge['source'], {}).get('labels', [])
-			tgt_labels = self.nodes.get(edge['target'], {}).get('labels', [])
-			return [(src_label, tgt_label) for src_label in src_labels for tgt_label in tgt_labels]
-
-		def get_source_and_target_labels(edge_list):
-			"""
-			Gets the set of source and target labels for a given list of edges.
-
-			Args:
-				edge_list (list): The list of edges to retrieve labels for.
-
-			Returns:
-				set: A set of source and target labels.
-			"""
-			edge_node_labels = {label for edge in edge_list for label in get_edge_node_labels(edge)}
-			return edge_node_labels
-
-		return {label: get_source_and_target_labels(edges) for label, edges in self.edges.items()}
+		included_nodes = self.filter_nodes_by_labels(included_node_labels)
+		included_edges = {label: edge_list for label, edge_list in self.edges.items() if label in included_edge_labels}
+		return {
+			"elements": {
+				"nodes": [{"data": node} for node in list(included_nodes.values())],
+				"edges": [{"data": edge} for edge in sum(list(included_edges.values()), [])]
+			}
+		}
